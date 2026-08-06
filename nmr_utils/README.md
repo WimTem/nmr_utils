@@ -1,4 +1,4 @@
-# dyn-dipolar
+# NMR Utils
 
 Average dipolar tensors and chemical shifts over a molecular dynamics trajectory stored as
 multiple VASP calculations.
