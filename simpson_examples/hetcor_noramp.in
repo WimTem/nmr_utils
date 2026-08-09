@@ -1,0 +1,110 @@
+source __SPINSYS__
+
+par {
+  spin_rate        12.5e3
+  proton_frequency 300e6
+  crystal_file     rep100
+  gamma_angles     6
+
+  start_operator   I1z
+  detect_operator  I2p
+
+  np               512
+  ni               100
+
+  # --- direct (t2) / indirect (t1) spectral widths ------------------------
+  # Edit sw_req / sw1_req to whatever you want; both are snapped up/down to
+  # the nearest integer multiple of spin_rate so every acquired point (t2)
+  # and every t1 increment lands on an exact sub-multiple of the rotor period
+  variable sw_req         1*spin_rate
+  variable sw1_req        1*spin_rate
+  variable pts_per_rotor  round(sw_req/spin_rate)
+  variable pts_per_rotor1 round(sw1_req/spin_rate)
+  sw             pts_per_rotor*spin_rate
+  sw1            pts_per_rotor1*spin_rate
+  verbose          0
+
+  # 1H hard pulse
+  variable rfH 100e3
+  variable p90H 0.25e6/rfH
+
+  # 13C hard pulse
+  variable rfC_cp 80e3
+
+  # CP contact time (constant RF, no ramp)
+  # tcp is snapped so that p90H + tcp lands on an exact multiple of the rotor period
+  variable rotor_period 1.0e6/spin_rate
+  variable tcp_nominal __CP__
+  variable n_tcp round((tcp_nominal+p90H)/rotor_period)
+  variable tcp n_tcp*rotor_period-p90H
+  variable rfH_cp rfC_cp+spin_rate
+
+  # TPPM decoupling on 1H during acquisition -- tiled to fill exactly one
+  # direct-dimension dwell (1e6/sw), not hardwired to the rotor period, so
+  # it stays self-consistent for any pts_per_rotor. (14C, not 1H, gets a
+  # plain CW field during t1 whenever sw1 > spin_rate -- see pulseq below.)
+  variable flip       165
+  variable tppm_pairs 5
+  variable dwell      1.0e6/sw
+  variable tdec       dwell/(2*tppm_pairs)
+  variable rfdec      1.0e6*flip/(360*tdec)
+  variable tppm_angle 12.5
+}
+
+proc pulseq {} {
+  global par
+
+  for {set i 0} {$i < $par(ni)} {incr i 2} {
+    set n_t1 [expr $i/2]
+
+    # States quadrature: phase cycle on 1H excitation
+    foreach ph {x y} {
+      reset
+      pulse $par(p90H) $par(rfH) $ph 0 x
+
+      if {$n_t1 > 0} {
+        set t1_delay [expr $n_t1*1.0e6/$par(sw1)]
+        if {$par(pts_per_rotor1) > 1} {
+          pulse $t1_delay 0 x $par(rfC_cp) x
+        } else {
+          delay $t1_delay
+        }
+      }
+
+      # Constant CP contact mixing (no ramp)
+      pulse $par(tcp) $par(rfH_cp) y $par(rfC_cp) x
+
+      # TPPM decoupling on 1H, tiling exactly one acquisition dwell.
+      acq_block {
+        for {set k 0} {$k < $par(tppm_pairs)} {incr k} {
+          pulse $par(tdec) $par(rfdec) $par(tppm_angle) 0 x
+          pulse $par(tdec) $par(rfdec) [expr -$par(tppm_angle)] 0 x
+        }
+      }
+    }
+  }
+}
+
+
+proc main {} {
+  global par
+  set par(p90H)  [expr 0.25e6 / $par(rfH)]
+
+  set hh_diff [expr $par(rfH_cp) - $par(rfC_cp)]
+  set preacq [expr $par(p90H) + $par(tcp)]
+  set preacq_mod [expr fmod($preacq, $par(rotor_period))]
+  puts "1H  90      = $par(p90H) µs"
+  puts "CP contact   = $par(tcp) µs (Constant RF)"
+  puts "HH diff      = $hh_diff Hz  (spin_rate = $par(spin_rate) Hz, n=1 match: [expr $hh_diff == $par(spin_rate)])"
+  puts "Rotor sync   = p90H+tcp = $preacq µs vs rotor_period $par(rotor_period) µs (remainder = $preacq_mod µs, should be ~0)"
+  puts "sw   used    = $par(sw) Hz ($par(pts_per_rotor) point(s)/rotor period, dwell = $par(dwell) µs, requested $par(sw_req) Hz)"
+  puts "sw1  used    = $par(sw1) Hz ($par(pts_per_rotor1) point(s)/rotor period, requested $par(sw1_req) Hz)"
+  puts "TPPM         = $par(rfdec) Hz, flip=$par(flip) deg, ±$par(tppm_angle) deg, $par(tdec) µs/pulse, $par(tppm_pairs) pairs (total [expr $par(tppm_pairs)*2*$par(tdec)] µs vs dwell $par(dwell) µs)"
+
+  set f [fsimpson]
+
+  puts [format "Calc. time = %.1f s" [expr {$par(tcalc)*1e-6}]]
+  puts "" 
+  set spename [fsave $f __SPINSYS__.fid]
+  funload $f
+}
