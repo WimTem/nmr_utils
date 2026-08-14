@@ -127,24 +127,9 @@ proc pulseq {} {
 proc main {} {
   global par
 
-  puts "=========================================="
-  puts "Homonuclear 1H DQ/SQ Correlation (POST-C7)"
-  puts "=========================================="
-  puts "Pulse parameters:"
-  puts "  RF amplitude:  $par(rf) Hz"
-  puts "  90° pulse:     $par(p90) µs"
-  puts ""
-  puts "Spectral parameters:"
-  puts "  Spin rate:     $par(spin_rate) Hz"
-  puts "  sw  (t2):      $par(sw) Hz"
-  puts "  sw1 (t1):      $par(sw1) Hz"
-  puts "  np:            $par(np)"
-  puts "  ni:            $par(ni) (128 complex points)"
-  puts ""
-
   set f [fsimpson]
   
-  set spename [fsave $f cc2d_dqsq.fid]
+  set spename [fsave $f dqsq.fid]
   puts "Output saved to: $spename"
   
   funload $f
