@@ -1,0 +1,151 @@
+spinsys {
+  channels 1H
+  nuclei 1H 1H 1H
+ 
+  shift 1 2p 0p 0. 0. 0. 0.
+  shift 2 4p 0p 0. 0. 0. 0.
+
+  dipole 1 2 -20e3 0. 0. 0.
+}
+
+par {
+  spin_rate        60e3
+  proton_frequency 400e6
+  crystal_file     zcw376
+  gamma_angles     9
+  start_operator   Inz
+  detect_operator  Inp
+  np               128
+  ni               256
+
+  sw               spin_rate
+  sw1              spin_rate
+  verbose          01
+  
+  # Read pulse parameters
+  variable rf      5*spin_rate
+  variable p90     0.25e6/rf
+  
+  # Rotor period and delays
+  variable rotor_period 1.0e6/spin_rate
+  variable n_mix        10
+
+  # Evolution time steps
+  variable t1_step      1.0e6/sw1
+  variable t2_step      1.0e6/sw
+}
+
+proc postc7_creation { ph } {
+    global par
+    set rf [expr 7.0*$par(spin_rate)]
+    set t90 [expr 0.25e6/$rf]
+    for {set i 1} {$i <= 7} {incr i 1} {
+        set phase [expr $i*360.0/7.0]
+        pulse $t90 $rf [expr {$phase + $ph}]
+        pulse [expr 4.0*$t90] $rf [expr {$phase + 180 + $ph}]
+        pulse [expr 3.0*$t90] $rf [expr {$phase + $ph}]
+    }
+}
+
+proc postc7_reconversion { ph } {
+    global par
+    set rf [expr 7.0*$par(spin_rate)]
+    set t90 [expr 0.25e6/$rf]
+    for {set i 7} {$i >= 1} {incr i -1} {
+        set phase [expr $i*360.0/7.0]
+        # Standard time-reversed POST element
+        pulse [expr 3.0*$t90] $rf [expr {$phase + $ph}]
+        pulse [expr 4.0*$t90] $rf [expr {$phase + 180 + $ph}]
+        pulse $t90 $rf [expr {$phase + $ph}]
+    }
+}
+
+proc pulseq {} {
+  global par
+
+  # Coherence filter for pure Double Quantum Coherence (+2 and -2)
+  matrix set 222 totalcoherence {2 -2}
+
+  # 1. Pre-calculate and Store Propagators
+  reset
+  postc7_creation 0
+  store 31
+
+  reset 
+  postc7_creation 45
+  store 32
+
+  reset
+  postc7_reconversion 0
+  store 41
+
+  # read pulse Iz -> -Ix
+  reset
+  pulseid $par(p90) $par(rf) 90
+  store 8
+
+  # t1 increment step propagator
+  reset
+  delay $par(t1_step)
+  store 1
+
+  # Total t1 evolution propagator
+  reset
+  store 11
+  
+  # t2 dwell step propagator
+  reset
+  delay $par(t2_step)
+  store 2
+
+  for {set i 0} {$i < $par(ni)} {incr i 2} {
+
+      reset
+      for {set j 0} {$j < $par(n_mix)} {incr j} { prop 31 }
+      filter 222
+      prop 11
+      for {set k 0} {$k < $par(n_mix)} {incr k} { prop 41 }
+      prop 8
+      acq_block {prop 2}
+
+      reset
+      for {set j 0} {$j < $par(n_mix)} {incr j} { prop 32 }
+      filter 222
+      prop 11
+      for {set k 0} {$k < $par(n_mix)} {incr k} { prop 41 }
+      prop 8
+      acq_block {prop 2}
+
+      # --- Advance t1 evolution time ---
+      reset
+      prop 11
+      prop 1
+      store 11
+  }
+}
+
+proc main {} {
+  global par
+
+  puts "=========================================="
+  puts "Homonuclear 1H DQ/SQ Correlation (POST-C7)"
+  puts "=========================================="
+  puts "Pulse parameters:"
+  puts "  RF amplitude:  $par(rf) Hz"
+  puts "  90° pulse:     $par(p90) µs"
+  puts ""
+  puts "Spectral parameters:"
+  puts "  Spin rate:     $par(spin_rate) Hz"
+  puts "  sw  (t2):      $par(sw) Hz"
+  puts "  sw1 (t1):      $par(sw1) Hz"
+  puts "  np:            $par(np)"
+  puts "  ni:            $par(ni) (128 complex points)"
+  puts ""
+
+  set f [fsimpson]
+  
+  set spename [fsave $f cc2d_dqsq.fid]
+  puts "Output saved to: $spename"
+  
+  funload $f
+}
